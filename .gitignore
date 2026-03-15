@@ -1,0 +1,20 @@
+# Environment files with secrets
+docker/.env
+
+# Uploaded service manuals (large binary files)
+manuals/*.pdf
+manuals/*.doc
+manuals/*.docx
+manuals/*.xls
+manuals/*.xlsx
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker volumes (if stored locally)
+docker/volumes/
