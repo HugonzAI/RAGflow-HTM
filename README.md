@@ -10,15 +10,6 @@ Upload device service manuals (PDF, Word, Excel, scanned images) and ask natural
 
 Built on [RAGFlow](https://github.com/infiniflow/ragflow) — an open-source RAG engine with deep document understanding.
 
-## Features
-
-- **Deep PDF parsing** — handles complex layouts, tables, multi-column text, headers/footers
-- **OCR support** — works with scanned service manuals
-- **Multi-format** — PDF, Word, Excel, PowerPoint, images
-- **Web UI** — built-in chat interface for engineers to query manuals
-- **REST API** — integrate with CMMS/EAM systems (port 9380)
-- **Docker deployment** — single command to start all services
-
 ## System Requirements
 
 | Resource | Minimum |
@@ -31,157 +22,114 @@ Built on [RAGFlow](https://github.com/infiniflow/ragflow) — an open-source RAG
 
 ## Quick Start
 
-### 1. Clone and configure
+### 1. Prepare the host
 
 ```bash
-git clone https://github.com/HugonzAI/RAGflow-HTM.git
-cd RAGflow-HTM/docker
-
-# Create your environment config
-cp .env.example .env
-
-# IMPORTANT: Edit .env and change all default passwords
-nano .env
-```
-
-### 2. Prepare the host
-
-```bash
-# Required kernel tuning for Elasticsearch
+# Required for Elasticsearch
 sudo sysctl -w vm.max_map_count=262144
-
-# Make it persistent across reboots
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
 ```
 
-### 3. Start the services
+### 2. Clone RAGFlow
 
 ```bash
-cd docker
+git clone https://github.com/infiniflow/ragflow.git
+cd ragflow/docker
+```
+
+### 3. Configure environment
+
+Use our pre-tuned `.env.example` as a starting point, or edit RAGFlow's default `.env` directly:
+
+```bash
+# Option A: use our template
+cp /path/to/RAGflow-HTM/docker/.env.example .env
+
+# Option B: edit RAGFlow's default .env in place
+nano .env
+```
+
+Either way, **change all passwords** before starting.
+
+### 4. Start services
+
+```bash
 docker compose up -d
 ```
 
-Wait for all services to become healthy (this may take a few minutes on first start):
+First start may take a few minutes. Check status with:
 
 ```bash
-docker compose ps
+docker compose ps        # all services should show "healthy"
+docker logs -f ragflow-server  # watch RAGFlow startup logs
 ```
 
-### 4. Access the Web UI
-
-Open your browser and navigate to:
+### 5. Access the Web UI
 
 - **Web UI**: `http://<your-server-ip>` (port 80)
 - **API**: `http://<your-server-ip>:9380`
-- **MinIO Console**: `http://<your-server-ip>:9001` (for storage management)
 
-### 5. Initial Setup in the Web UI
+### 6. Set up for HTM use
 
-1. **Register** an admin account (first user becomes admin)
-2. **Configure an LLM provider** — Go to Settings → Model Providers and add your LLM API key (OpenAI, Azure OpenAI, Ollama for local models, etc.)
-3. **Create a Knowledge Base** — Name it something like "Service Manuals" or organize by manufacturer
-4. **Upload PDFs** — Upload your device service manuals
-5. **Create an Assistant** — Link it to the knowledge base and start chatting
+1. **Register** an account (first user becomes admin)
+2. **Add an LLM provider** — Settings > Model Providers > add your API key (OpenAI, Azure OpenAI, or Ollama for local models)
+3. **Create a Knowledge Base** — e.g. "Philips Monitors" or "GE Ventilators"
+4. **Upload service manuals** — drag and drop PDFs, wait for parsing to complete
+5. **Create an Assistant** — link it to your knowledge base, then start asking questions
 
-## Recommended Knowledge Base Organization
+## Knowledge Base Organization
 
-For HTM use, consider organizing knowledge bases by:
+In the RAGFlow Web UI, organize knowledge bases by manufacturer or device family:
 
-```
-├── Philips/
-│   ├── MX800 Service Manual.pdf
-│   ├── IntelliVue MP Series.pdf
-│   └── ...
-├── GE Healthcare/
-│   ├── Carescape R860.pdf
-│   ├── CARESTATION 620-650.pdf
-│   └── ...
-├── Siemens/
-│   ├── Artis zee Service Manual.pdf
-│   └── ...
-└── General/
-    ├── Electrical Safety Standards.pdf
-    └── ...
-```
+| Knowledge Base | Example Contents |
+|----------------|-----------------|
+| Philips Monitors | MX800, IntelliVue MP Series service manuals |
+| GE Ventilators | Carescape R860, CARESTATION 620 service manuals |
+| Siemens Imaging | Artis zee service manual |
+| General Reference | Electrical safety standards, common procedures |
 
-Or create one knowledge base per device family for more focused retrieval.
+Or use a single knowledge base if your manual collection is small.
 
-## Architecture
+## Project Structure
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  HTM Engineer                    │
-│              (Browser / API Client)              │
-└──────────────────┬──────────────────────────────┘
-                   │
-         ┌─────────▼─────────┐
-         │     RAGFlow        │  :80 (Web UI)
-         │   (Application)    │  :9380 (API)
-         └──┬──┬──┬──┬───────┘
-            │  │  │  │
-   ┌────────┘  │  │  └────────┐
-   ▼           ▼  ▼           ▼
-┌──────┐ ┌─────┐ ┌─────┐ ┌──────┐
-│ ES   │ │MySQL│ │MinIO│ │Redis │
-│:1200 │ │:5455│ │:9000│ │:6379 │
-└──────┘ └─────┘ └─────┘ └──────┘
+RAGflow-HTM/
+├── README.md              # This file
+├── docker/
+│   └── .env.example       # Pre-tuned environment config
+└── manuals/               # Local storage for your PDF manuals
 ```
 
-| Service | Purpose |
-|---------|---------|
-| **Elasticsearch** | Full-text search and vector storage for document chunks |
-| **MySQL** | Metadata, user accounts, knowledge base configuration |
-| **MinIO** | Object storage for uploaded documents (PDFs, images) |
-| **Redis** | Caching and session management |
-
-## Configuration
-
-All configuration is in `docker/.env`. Key settings:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RAGFLOW_IMAGE` | `infiniflow/ragflow:v0.24.0` | RAGFlow Docker image |
-| `DOC_ENGINE` | `elasticsearch` | Search engine backend |
-| `DEVICE` | `cpu` | `cpu` or `gpu` (NVIDIA) |
-| `DOC_BULK_SIZE` | `4` | Document processing batch size |
-| `EMBEDDING_BATCH_SIZE` | `16` | Embedding computation batch size |
+RAGFlow itself is deployed from its own repository — we do not maintain a custom docker-compose.
 
 ## Useful Commands
 
 ```bash
-# View logs
-docker compose logs -f ragflow
+# View RAGFlow logs
+docker logs -f ragflow-server
 
-# Restart a specific service
-docker compose restart ragflow
+# Restart RAGFlow
+docker compose restart ragflow-server
 
 # Stop all services
 docker compose down
 
 # Stop and remove all data (fresh start)
 docker compose down -v
-
-# Check service health
-docker compose ps
 ```
 
 ## Troubleshooting
 
-**Services fail to start?**
-- Check `vm.max_map_count`: `sysctl vm.max_map_count` (must be ≥ 262144)
-- Ensure ports 80, 443, 9380, 1200, 5455, 9000, 9001, 6379 are available
+**Services won't start?**
+- Check `sysctl vm.max_map_count` (must be >= 262144)
+- Check port availability: 80, 443, 9380
 - Check logs: `docker compose logs <service-name>`
 
 **PDF not parsing correctly?**
-- Try different chunking templates in the Knowledge Base settings
-- For scanned PDFs, ensure OCR is enabled
-- Increase `DOC_BULK_SIZE` if processing is slow
+- Try different chunking methods in Knowledge Base settings
+- For scanned PDFs, ensure OCR is enabled in the parsing config
+- Check that your LLM provider is configured (needed for embedding)
 
 **Out of memory?**
 - Increase `MEM_LIMIT` in `.env`
-- Increase Docker's memory allocation
-- Consider using `DEVICE=gpu` for embedding acceleration
-
-## License
-
-This project scaffold is MIT licensed. RAGFlow itself is licensed under the [Apache 2.0 License](https://github.com/infiniflow/ragflow/blob/main/LICENSE).
+- Increase Docker's memory allocation in Docker Desktop settings
