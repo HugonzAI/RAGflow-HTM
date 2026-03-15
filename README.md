@@ -12,6 +12,8 @@ Built on [RAGFlow](https://github.com/infiniflow/ragflow) — an open-source RAG
 
 ## System Requirements
 
+A Linux VPS with:
+
 | Resource | Minimum |
 |----------|---------|
 | CPU | 4 cores |
@@ -20,9 +22,48 @@ Built on [RAGFlow](https://github.com/infiniflow/ragflow) — an open-source RAG
 | Docker | 24.0.0+ |
 | Docker Compose | v2.26.1+ |
 
-## Quick Start
+## Deployment Overview
 
-### 1. Prepare the host
+```
+User (browser)
+     │
+     │  https://htm.localhub.nz
+     ▼
+Cloudflare (DNS + SSL)
+     │
+     │  Cloudflare Tunnel
+     ▼
+VPS (no open ports needed)
+     │
+     │  localhost:80
+     ▼
+RAGFlow (Docker Compose)
+```
+
+## Step-by-Step Deployment
+
+### 1. Get a VPS
+
+Any Linux VPS with 4 cores / 16GB RAM / 50GB disk. Example providers:
+
+| Provider | Config | ~Cost/mo |
+|----------|--------|----------|
+| Hetzner | CPX31 (4 vCPU / 16GB) | €15 |
+| DigitalOcean | 4 vCPU / 16GB (Sydney) | $48 |
+| Vultr | 4 vCPU / 16GB (Sydney) | $48 |
+
+After purchasing, SSH into the server.
+
+### 2. Install Docker
+
+```bash
+# Ubuntu/Debian
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+# Log out and back in for group change to take effect
+```
+
+### 3. Prepare the host
 
 ```bash
 # Required for Elasticsearch
@@ -30,52 +71,102 @@ sudo sysctl -w vm.max_map_count=262144
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
 ```
 
-### 2. Clone RAGFlow
+### 4. Clone and start RAGFlow
 
 ```bash
 git clone https://github.com/infiniflow/ragflow.git
 cd ragflow/docker
-```
 
-### 3. Configure environment
-
-Use our pre-tuned `.env.example` as a starting point, or edit RAGFlow's default `.env` directly:
-
-```bash
-# Option A: use our template
-cp /path/to/RAGflow-HTM/docker/.env.example .env
-
-# Option B: edit RAGFlow's default .env in place
+# Edit environment — change all passwords
 nano .env
-```
 
-Either way, **change all passwords** before starting.
-
-### 4. Start services
-
-```bash
+# Start all services
 docker compose up -d
 ```
 
-First start may take a few minutes. Check status with:
+First start takes a few minutes. Check status:
 
 ```bash
 docker compose ps        # all services should show "healthy"
-docker logs -f ragflow-server  # watch RAGFlow startup logs
+docker logs -f ragflow-server  # watch startup logs
 ```
 
-### 5. Access the Web UI
+Verify it works locally:
 
-- **Web UI**: `http://<your-server-ip>` (port 80)
-- **API**: `http://<your-server-ip>:9380`
+```bash
+curl -s http://localhost | head -5
+```
+
+### 5. Set up Cloudflare Tunnel
+
+This exposes RAGFlow at `htm.localhub.nz` without opening any ports on the VPS.
+
+#### a. Install cloudflared on the VPS
+
+```bash
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt update && sudo apt install -y cloudflared
+```
+
+#### b. Authenticate with Cloudflare
+
+```bash
+cloudflared tunnel login
+# This opens a URL — click it, select the localhub.nz domain, authorize
+```
+
+#### c. Create the tunnel
+
+```bash
+cloudflared tunnel create ragflow-htm
+```
+
+Note the tunnel ID printed (e.g. `a1b2c3d4-...`).
+
+#### d. Create the config file
+
+```bash
+mkdir -p ~/.cloudflared
+cat > ~/.cloudflared/config.yml << 'EOF'
+tunnel: <TUNNEL_ID>
+credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: htm.localhub.nz
+    service: http://localhost:80
+  - service: http_status:404
+EOF
+```
+
+Replace `<TUNNEL_ID>` with the actual tunnel ID from step c.
+
+#### e. Add DNS record
+
+```bash
+cloudflared tunnel route dns ragflow-htm htm.localhub.nz
+```
+
+This automatically creates a CNAME record in Cloudflare DNS.
+
+#### f. Run the tunnel as a system service
+
+```bash
+sudo cloudflared service install
+sudo systemctl enable cloudflared
+sudo systemctl start cloudflared
+```
+
+Now `https://htm.localhub.nz` should load the RAGFlow Web UI. SSL is handled by Cloudflare automatically.
 
 ### 6. Set up for HTM use
 
-1. **Register** an account (first user becomes admin)
-2. **Add an LLM provider** — Settings > Model Providers > add your API key (OpenAI, Azure OpenAI, or Ollama for local models)
-3. **Create a Knowledge Base** — e.g. "Philips Monitors" or "GE Ventilators"
-4. **Upload service manuals** — drag and drop PDFs, wait for parsing to complete
-5. **Create an Assistant** — link it to your knowledge base, then start asking questions
+1. Open `https://htm.localhub.nz` in your browser
+2. **Register** an account (first user becomes admin)
+3. **Add an LLM provider** — Settings > Model Providers > add your API key (OpenAI, Azure OpenAI, or Ollama for local models)
+4. **Create a Knowledge Base** — e.g. "Philips Monitors" or "GE Ventilators"
+5. **Upload service manuals** — drag and drop PDFs, wait for parsing to complete
+6. **Create an Assistant** — link it to your knowledge base, then start asking questions
 
 ## Knowledge Base Organization
 
@@ -105,7 +196,7 @@ RAGFlow itself is deployed from its own repository — we do not maintain a cust
 ## Useful Commands
 
 ```bash
-# View RAGFlow logs
+# View RAGFlow logs (run from ragflow/docker/)
 docker logs -f ragflow-server
 
 # Restart RAGFlow
@@ -116,13 +207,16 @@ docker compose down
 
 # Stop and remove all data (fresh start)
 docker compose down -v
+
+# Check Cloudflare Tunnel status
+sudo systemctl status cloudflared
+journalctl -u cloudflared -f
 ```
 
 ## Troubleshooting
 
 **Services won't start?**
 - Check `sysctl vm.max_map_count` (must be >= 262144)
-- Check port availability: 80, 443, 9380
 - Check logs: `docker compose logs <service-name>`
 
 **PDF not parsing correctly?**
@@ -130,6 +224,11 @@ docker compose down -v
 - For scanned PDFs, ensure OCR is enabled in the parsing config
 - Check that your LLM provider is configured (needed for embedding)
 
+**htm.localhub.nz not loading?**
+- Check tunnel: `sudo systemctl status cloudflared`
+- Check RAGFlow: `docker compose ps` (all healthy?)
+- Check DNS: `dig htm.localhub.nz` (should show CNAME to cfargotunnel.com)
+
 **Out of memory?**
 - Increase `MEM_LIMIT` in `.env`
-- Increase Docker's memory allocation in Docker Desktop settings
+- Consider upgrading VPS to 32GB RAM for larger manual collections
